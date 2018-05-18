@@ -1,5 +1,5 @@
 # DeepLearning-NLP
-This repository will apply deep learning methods to deal with natural language processing problems. I will use the biomedical dataset [MIMIC-III](https://mimic.mit.edu/mimicdata/whatsnew/) to train my model.
+This repository will apply deep learning methods to deal with natural language processing problems. 
 
 ## Requirements:
 * python (3.5.5)
@@ -9,8 +9,9 @@ This repository will apply deep learning methods to deal with natural language p
 
 ## To-do List
 * [ ] Segmentation
+* [x] Word Embedding
 * [ ] POS
-* [x] NER
+* [ ] NER
 * [ ] Parsing
 * [ ] Textsum
 * [ ] Sentiment analysis
