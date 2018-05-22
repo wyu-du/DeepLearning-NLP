@@ -11,7 +11,7 @@ This repository will apply deep learning methods to deal with natural language p
 * [ ] Segmentation
 * [x] Word Embedding
 * [ ] POS
-* [ ] NER
+* [x] NER
 * [ ] Parsing
 * [ ] Textsum
 * [ ] Sentiment analysis
