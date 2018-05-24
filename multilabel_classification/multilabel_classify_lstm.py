@@ -3,13 +3,6 @@
 Created on Thu May  3 16:18:21 2018
 
 @author: Administrator
-
-
-Training Data Structure:
-    'category','WYSText'
-    脂肪肝 钙化灶  ,肝脏大小形态尚可....
-    子宫肌瘤 宫颈囊肿  ,膀胱充盈壁光滑...
-    脂肪肝 肾盂旁囊肿  ,肝脏回声前方...
     
 """
 
@@ -19,6 +12,8 @@ import tensorflow as tf
 import random
 from tensorflow.python.ops import rnn_cell
 from sklearn import metrics
+from skmultilearn.problem_transform.lp import LabelPowerset
+from sklearn.naive_bayes import GaussianNB
 
 ## Helper methods for reading and creating sequences of data for RNN/LSTM
 def read_data(file_path):
@@ -28,7 +23,7 @@ def read_data(file_path):
 def build_label_dict(data):
     label_dict={}
     for i in range(len(data)):
-        for label in data.iloc[i,0].split(' '):
+        for label in data.iloc[i,0].strip(' ').split(' '):
             if label not in label_dict.keys():
                 label_dict[label]=len(label_dict.keys())
     return label_dict
@@ -54,6 +49,17 @@ def sentence2id(sent, word2id):
         sentence_id.append(word2id[word])
     return sentence_id
 
+def get_char_embeddings(word2id, embedding_dim=100, pretrain=False):
+    if pretrain:
+        # Use pretrained glove vectors
+        _embeddings = pd.read_csv('data_path/vectors.txt', encoding='utf8', sep=' ')
+        embeddings = np.array(_embeddings.iloc[:,1:], dtype='float32')
+    else:
+        # random initialize word embeddings
+        embedding_mat=np.random.uniform(-0.25, 0.25, (len(word2id.items()), embedding_dim))
+        embeddings=np.float32(embedding_mat)
+    return embeddings
+
 def batch_yield(segments, labels, batch_size, vocab, label_dict, sequence_length, shuffle=False):
     if shuffle:
         random.shuffle(data)
@@ -73,31 +79,41 @@ def batch_yield(segments, labels, batch_size, vocab, label_dict, sequence_length
         seqs.append(sent_)
         cates.append(label_)
 
-
+def batch_yield_predict(segments, batch_size, vocab, sequence_length):
+    seqs=[]
+    for i in segments.index:
+        sent_=sentence2id(segments[i], vocab)
+        if len(sent_)<=sequence_length:
+            sent_=sent_+[0]*(sequence_length-len(sent_))
+        else:
+            sent_=sent_[:sequence_length]
+        if len(seqs)==batch_size:
+            yield np.array(seqs)
+            seqs=[]
+        seqs.append(sent_)
+        
 
 
 ## Import data
 data=read_data('data_path/labeled_text_train2.csv')
 label_dict=build_label_dict(data)
 word2id=get_vocab('data_path/vocab.txt')
-_embeddings = pd.read_csv('data_path/vectors.txt', encoding='utf8', sep=' ')
-embeddings = np.array(_embeddings.iloc[:,1:], dtype='float32')
-
+embeddings = get_char_embeddings(word2id, 100, pretrain=True)
 
 labels=data['category']
 segments=data['WYSText']
-train_test_spilt=np.random.rand(len(segments))<0.80
-train_x=segments[train_test_spilt]
-train_y=labels[train_test_spilt]
-test_x=segments[~train_test_spilt]
-test_y=labels[~train_test_spilt]
+train_dev_spilt=np.random.rand(len(segments))<0.80
+train_x=segments[train_dev_spilt]
+train_y=labels[train_dev_spilt]
+dev_x=segments[~train_dev_spilt]
+dev_y=labels[~train_dev_spilt]
 
 
 
 ## Hyperparameters Configuration
 tf.reset_default_graph()
 learning_rate=0.001
-training_epochs=100
+training_epochs=10
 batch_size=10
 total_batches=(train_x.shape[0]//batch_size)
 
@@ -132,7 +148,7 @@ def LSTM(x, weight, bias):
     # x shape=(?, 100(words), 100(embeddings))
     # outputs shape=(?, 100(words), 64(units))
     outputs, state=tf.nn.dynamic_rnn(cell=multi_layer_cell, inputs=x, sequence_length=sequence_lengths, dtype=tf.float32)
-    # output_flattened shape=(?, 64) 将(?, 100, 64)展开成(?*100, 64)
+    # output_flattened shape=(?, 64) change(?, 100, 64)to(?*100, 64)
     output_flattened=tf.reshape(outputs, [-1, n_hidden])
     # output_logits shape=(?*100, n_classes)
     output_logits=tf.add(tf.matmul(output_flattened, weight), bias)
@@ -143,6 +159,8 @@ def LSTM(x, weight, bias):
     # output_last shape=(?, n_classes)
     output_last=tf.gather(tf.transpose(output_reshaped, [1, 0, 2]), sequence_length-1)
     return output_last, output_all
+
+
 
 ## Build word embeddings
 input_word_embeddings=tf.Variable(embeddings, dtype=tf.float32, trainable=False, name='input_word_embeddings')
@@ -155,26 +173,64 @@ y_last, y_all=LSTM(x, weight, bias)
 ### Loss function: Binary cross entropy and target replication
 all_steps_cost=-tf.reduce_mean((y_steps*tf.log(y_all))+ (1-y_steps)*tf.log(1-y_all))
 last_step_cost=-tf.reduce_mean((y*tf.log(y_last))+ ((1-y)*tf.log(1-y_last)))
+# Alternative loss function: 
+#all_steps_cost=tf.reduce_sum(tf.square(tf.subtract(y_steps, y_all)))
+#last_step_cost=tf.reduce_sum(tf.square(tf.subtract(y, y_last)))
 loss_function=(alpha*all_steps_cost)+((1-alpha)*last_step_cost)
 optimizer=tf.train.AdamOptimizer(learning_rate).minimize(loss_function)
 
 
 
-## Training and testing the model
+## Train and dev the model
+model_path='checkpoints/'
+init=tf.global_variables_initializer()
+saver=tf.train.Saver()
 with tf.Session() as session:
-    tf.global_variables_initializer().run()
-    session.run(input_word_embeddings)
-    roc_auc_score=[]
+    session.run(init)
     for epoch in range(training_epochs):
+        # train stage
         batches=batch_yield(train_x, train_y, batch_size, word2id, label_dict, sequence_length, shuffle=False)
+        train_x_fit=np.zeros([batch_size*total_batches, n_classes])
+        train_y_fit=np.zeros([batch_size*total_batches, n_classes])
         for step, (batch_x, batch_y) in enumerate(batches):
             batch_x_emb=session.run(word_embeddings, feed_dict={input_ids:batch_x})
-            _, c=session.run([optimizer, loss_function], feed_dict={x:batch_x_emb, y:batch_y, y_steps:np.tile(batch_y,((sequence_length),1)), sequence_lengths:[100]*batch_size})
-        batches_test=batch_yield(test_x, test_y, batch_size, word2id, label_dict, sequence_length, shuffle=False)
-        for step, (batch_test_x, batch_test_y) in enumerate(batches_test):
-            batch_test_x_emb=session.run(word_embeddings, feed_dict={input_ids:batch_test_x})
-            batch_pred_y=session.run(y_last, feed_dict={x:batch_test_x_emb, sequence_lengths:[100]*batch_size})
-            for i in range(batch_size):
-                roc_auc=metrics.roc_auc_score(batch_test_y[i], batch_pred_y[i])
-                roc_auc_score.append(roc_auc)
-        print('ROC AUC SCORE:', np.mean(roc_auc_score))
+            _, c=session.run([optimizer, loss_function], feed_dict={x:batch_x_emb, y:batch_y, 
+                                                                    y_steps:np.tile(batch_y,((sequence_length),1)), 
+                                                                    sequence_lengths:[sequence_length]*batch_size})
+            batch_pred_y=session.run(y_last, feed_dict={x:batch_x_emb, sequence_lengths:[sequence_length]*batch_size})
+            train_x_fit[step*batch_size : step*batch_size+batch_size]=batch_pred_y
+            train_y_fit[step*batch_size : step*batch_size+batch_size]=batch_y
+        clf=LabelPowerset(GaussianNB())
+        clf.fit(X=train_x_fit, y=train_y_fit)
+        # dev stage
+        batches_dev=batch_yield(dev_x, dev_y, batch_size, word2id, label_dict, sequence_length, shuffle=False)
+        dev_x_fit=np.zeros([batch_size*total_batches, n_classes])
+        dev_y_fit=np.zeros([batch_size*total_batches, n_classes])
+        for step, (batch_dev_x, batch_dev_y) in enumerate(batches_dev):
+            batch_dev_x_emb=session.run(word_embeddings, feed_dict={input_ids:batch_dev_x})
+            batch_dev_pred_y=session.run(y_last, feed_dict={x:batch_dev_x_emb, sequence_lengths:[sequence_length]*batch_size})
+            dev_x_fit[step*batch_size : step*batch_size+batch_size]=batch_dev_pred_y
+            dev_y_fit[step*batch_size : step*batch_size+batch_size]=batch_dev_y
+        dev_preds=clf.predict(dev_x_fit)
+        dev_preds=dev_preds.toarray()
+        acc=metrics.accuracy_score(dev_preds, dev_y_fit)
+        print('Epoch '+str(epoch+1)+': accuracy = '+str(acc))
+        save_path=saver.save(session, model_path)
+        
+
+
+## Make predictions
+test_data=read_data('data_path/labeled_text_test2.csv')
+test_x=data['WYSText']
+num_batches=train_x.shape[0]//batch_size
+with tf.Session() as session:
+    session.run(init)
+    saver.restore(session, tf.train.latest_checkpoint(model_path))
+    batches_test=batch_yield_predict(test_x, batch_size, word2id, sequence_length)
+    test_y=np.zeros([batch_size*num_batches, n_classes])
+    for step, batch_test_x in enumerate(batches_test):
+        batch_test_x_emb=session.run(word_embeddings, feed_dict={input_ids:batch_test_x})
+        batch_test_y=session.run(y_last, feed_dict={x:batch_test_x_emb, sequence_lengths:[sequence_length]*batch_size})
+        test_y[step*batch_size: step*batch_size+batch_size]=batch_test_y
+    test_preds=clf.predict(test_y)
+    test_preds=test_preds.toarray()
