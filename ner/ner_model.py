@@ -17,31 +17,6 @@ from models.data import read_corpus, read_dictionary, tag2label, random_embeddin
 def run_ner_model(train_data='data_path', test_data='data_path', batch_size=64, epoch=30, hidden_dim=300, optimizer='Adam', 
                   CRF=True, lr=0.001, clip=5.0, dropout=0.5, update_embedding=True, pretrain_embedding='random', 
                   embedding_dim=300, shuffle=True, mode='pred', demo_model='1523352428'):
-    '''
-    识别医学命名实体
-    
-    输入参数：
-        --train_data, type=str, help='train data source'
-        --test_data, type=str, help='test data source'
-        --batch_size, type=int, help='#sample of each minibatch'
-        --epoch, type=int, help='#epoch of training'
-        --hidden_dim, type=int, help='#dim of hidden state'
-        --optimizer, type=str, help='Adam/Adadelta/Adagrad/RMSProp/Momentum/SGD'
-        --CRF, type=bool, help='use CRF at the top layer. if False, use Softmax'
-        --lr, type=float, help='learning rate'
-        --clip, type=float, help='gradient clipping'
-        --dropout, type=float, help='dropout keep_prob'
-        --update_embedding, type=bool, help='update embedding during training'
-        --pretrain_embedding, type=str, help='use pretrained char embedding or init it randomly'
-        --embedding_dim', type=int, help='random init char embedding_dim'
-        --shuffle, type=bool, help='shuffle training data before each epoch'
-        --mode, type=str, help='train/test/demo/pred'
-    输出：
-        --mode='train'时，输出训练模型与回测结果，保存在data_path_save路径下
-        --mode='test'时，输出测试集上的模型预测结果，保存在data_path_save路径下
-        --mode='demo'时，展示实体识别效果，在console中输入任意一句话，输出模型自动标记出实体的标签
-        --mode='pred'时，输出需要标注的CSV文件列表（在original_data路径下），输出标注完毕后的CSV文件（在predictions路径下）
-    '''
     
     ## Session configuration
     os.environ['CUDA_VISIBLE_DEVICES'] = '0'
