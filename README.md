@@ -6,6 +6,8 @@ This repository will apply deep learning methods to deal with natural language p
 * pandas (0.22.0)
 * numpy (1.14.3)
 * tensorflow (1.8.0)
+* sklearn (0.0)
+* scikit-multilearn (0.0.5)
 
 ## To-do List
 * [ ] Segmentation
