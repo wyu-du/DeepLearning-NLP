@@ -11,7 +11,6 @@ import numpy as np
 import tensorflow as tf
 import random
 from tensorflow.python.ops import rnn_cell
-from sklearn import metrics
 from skmultilearn.problem_transform.lp import LabelPowerset
 from sklearn.naive_bayes import GaussianNB
 
@@ -113,7 +112,7 @@ dev_y=labels[~train_dev_spilt]
 ## Hyperparameters Configuration
 tf.reset_default_graph()
 learning_rate=0.001
-training_epochs=10
+training_epochs=1
 batch_size=10
 total_batches=(train_x.shape[0]//batch_size)
 
@@ -213,8 +212,14 @@ with tf.Session() as session:
             dev_y_fit[step*batch_size : step*batch_size+batch_size]=batch_dev_y
         dev_preds=clf.predict(dev_x_fit)
         dev_preds=dev_preds.toarray()
-        acc=metrics.accuracy_score(dev_preds, dev_y_fit)
-        print('Epoch '+str(epoch+1)+': accuracy = '+str(acc))
+        base_y=dev_preds+dev_y_fit
+        acc=float(np.sum(base_y==2))/float(np.sum(base_y==1))
+        precision=float(np.sum(base_y==2))/float(np.sum(dev_preds==1))
+        recall=float(np.sum(base_y==2))/float(np.sum(dev_y_fit==1))
+        f1=2*precision*recall/(precision+recall)
+        print('----------- Epoch {} -------------'.format(epoch+1))
+        print('Accuracy\tPrecision\tRecall\tF1 measure')
+        print(str(acc)+'\t'+str(precision)+'\t'+str(recall)+'\t'+str(f1))
         save_path=saver.save(session, model_path)
         
 
