@@ -11,8 +11,7 @@ import numpy as np
 import tensorflow as tf
 import random
 from tensorflow.python.ops import rnn_cell
-from skmultilearn.problem_transform.lp import LabelPowerset
-from sklearn.naive_bayes import GaussianNB
+from skmultilearn.adapt import MLkNN
 
 ## Helper methods for reading and creating sequences of data for RNN/LSTM
 def read_data(file_path):
@@ -112,8 +111,8 @@ dev_y=labels[~train_dev_spilt]
 ## Hyperparameters Configuration
 tf.reset_default_graph()
 learning_rate=0.001
-training_epochs=1
-batch_size=10
+training_epochs=30
+batch_size=16
 total_batches=(train_x.shape[0]//batch_size)
 
 n_hidden=64
@@ -199,12 +198,13 @@ with tf.Session() as session:
             batch_pred_y=session.run(y_last, feed_dict={x:batch_x_emb, sequence_lengths:[sequence_length]*batch_size})
             train_x_fit[step*batch_size : step*batch_size+batch_size]=batch_pred_y
             train_y_fit[step*batch_size : step*batch_size+batch_size]=batch_y
-        clf=LabelPowerset(GaussianNB())
+        clf=MLkNN(k=4)
         clf.fit(X=train_x_fit, y=train_y_fit)
         # dev stage
         batches_dev=batch_yield(dev_x, dev_y, batch_size, word2id, label_dict, sequence_length, shuffle=False)
-        dev_x_fit=np.zeros([batch_size*total_batches, n_classes])
-        dev_y_fit=np.zeros([batch_size*total_batches, n_classes])
+        total_batches_dev=len(dev_x)//batch_size
+        dev_x_fit=np.zeros([batch_size*total_batches_dev, n_classes])
+        dev_y_fit=np.zeros([batch_size*total_batches_dev, n_classes])
         for step, (batch_dev_x, batch_dev_y) in enumerate(batches_dev):
             batch_dev_x_emb=session.run(word_embeddings, feed_dict={input_ids:batch_dev_x})
             batch_dev_pred_y=session.run(y_last, feed_dict={x:batch_dev_x_emb, sequence_lengths:[sequence_length]*batch_size})
@@ -213,7 +213,7 @@ with tf.Session() as session:
         dev_preds=clf.predict(dev_x_fit)
         dev_preds=dev_preds.toarray()
         base_y=dev_preds+dev_y_fit
-        acc=float(np.sum(base_y==2))/float(np.sum(base_y==1))
+        acc=float(np.sum(base_y==2))/float(np.sum(base_y==1)+np.sum(base_y==2))
         precision=float(np.sum(base_y==2))/float(np.sum(dev_preds==1))
         recall=float(np.sum(base_y==2))/float(np.sum(dev_y_fit==1))
         f1=2*precision*recall/(precision+recall)
@@ -223,7 +223,7 @@ with tf.Session() as session:
         save_path=saver.save(session, model_path)
         
 
-
+'''
 ## Make predictions
 test_data=read_data('data_path/labeled_text_test2.csv')
 test_x=data['WYSText']
@@ -239,3 +239,4 @@ with tf.Session() as session:
         test_y[step*batch_size: step*batch_size+batch_size]=batch_test_y
     test_preds=clf.predict(test_y)
     test_preds=test_preds.toarray()
+'''
