@@ -19,4 +19,5 @@ This repository will apply deep learning methods to deal with natural language p
 * [ ] Sentiment analysis
 * [x] Multi-classification
 * [x] Multi-label classification
+* [x] Attention based Multi-label classification
 * [ ] Question answering
