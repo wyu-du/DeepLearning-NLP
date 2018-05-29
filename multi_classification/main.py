@@ -11,11 +11,11 @@ import time
 import shutil
 import pickle
 import logging
-from cnn_rnn_model import data_helper
+import data_helper
 import numpy as np
 import tensorflow as tf
 import pandas as pd
-from cnn_rnn_model.text_cnn_rnn import TextCNNRNN
+from text_cnn_rnn import TextCNNRNN
 from sklearn.model_selection import train_test_split
 
 logging.getLogger().setLevel(logging.INFO)
