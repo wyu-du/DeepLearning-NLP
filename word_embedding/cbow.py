@@ -5,153 +5,161 @@ Created on Fri May 18 15:04:47 2018
 @author: Administrator
 """
 
-import numpy as np 
-import nltk
+import collections
+import math
+import numpy as np
+import os
+import random
+import tensorflow as tf
+import zipfile
+from matplotlib import pylab
+from six.moves import range
+from six.moves.urllib.request import urlretrieve
+from sklearn.manifold import TSNE
+import pickle
 
-class cbow:
-    
-    def __init__(self, text, window=2, n=2, learning_rate=0.0001):
-        self.n=n
-        self.text=text
-        self.window=window
-        self.learning_rate=learning_rate
-        self.vocabulary=list(set(text.lower().split()))
-        self.word_index={k:v for v, k in enumerate(self.vocabulary)}
-        self.V=np.random.uniform(-0.001, 0.001, (n, len(self.vocabulary)))
-        self.U=np.random.uniform(-0.001, 0.001, (len(self.vocabulary), n))
-        print('word vector size=', self.n)
-        print('vocabulary size=', self.vocabulary)
-        print('word index dict='. self.word_index)
-        print('shape of V='+str(self.V.shape))
-        print('shape of U='+str(self.U.shape))
-        
-    def get_one_hot(self, index):
-        one_hot=np.zeros(len(self.vocabulary))
-        one_hot[index]=1
-        return one_hot
-    
-    def get_representation_from_onehot(self, one_hot=None):
-        tmp=np.dot(self.V, one_hot)
-        return tmp
-    
-    def get_average_vector_context(self, left_context=None, right_context=None):
-        '''
-        Given the words in the left and right context, 
-        generate the average vector for the context of the current word.
-        '''
-        avg_vector=np.zeros(self.n)
-        
-        for word in left_context:
-            current_word_index=self.word_index[word]
-            one_hot_encoding=self.get_one_hot(current_word_index)
-            avg_vector+=self.get_representation_from_onehot(one_hot=one_hot_encoding)
-            
-        for word in right_context:
-            current_word_index=self.word_index[word]
-            one_hot_encoding=self.get_one_hot(current_word_index)
-            avg_vector+=self.get_representation_from_onehot(one_hot=one_hot_encoding)
-            
-        avg_vector=avg_vector/(2*self.window)
-        return avg_vector
-    
-    def get_score(self, avg_vec=None):
-        '''
-        Given an averaged vector in the current context of the center word, 
-        compute the product of the U with avg_vec.
-        '''
-        print('U shape='+str(self.U.shape))
-        print('Average vector shape='+str(avg_vec.shape))
-        return np.dot(self.U, avg_vec)
-    
-    def softmax(self, x):
-        if x.ndim>1:
-            x -= np.max(x, axis=-1).reshape(-1, 1)
-            x = np.exp(x)/np.sum(np.exp(x), axis=-1).reshape(-1, 1)
+
+# Download the data from the source website if necessary
+url="http://mattmahoney.net/dc/"
+def maybe_download(filename,expected_bytes):
+    if not os.path.exists(filename):
+        filename, _=urlretrieve(url+filename,filename)
+    statinfo=os.stat(filename)
+    if statinfo.st_size==expected_bytes:
+        print("① Found and verfied ",filename)
+    else:
+        print(statinfo.st_size)
+        raise Exception("Failed to verify ",filename,".Download with a broser!")
+    return filename
+filename=maybe_download("text8.zip",31344016)
+
+
+# Read the data into a string
+def read_data(filename):
+    with zipfile.ZipFile(filename) as f:
+        data=tf.compat.as_str(f.read(f.namelist()[0])).split()
+    return data
+words=read_data(filename)
+print("② Data size is ",len(words))
+
+
+# Build the dictionary and replace rare words with UNK token
+vocabulary_size=50000
+def build_dataset(words):
+    count=[["UNK",-1]]
+    count.extend(collections.Counter(words).most_common(vocabulary_size-1))
+    dictionary=dict()
+    for word,_ in count:
+        dictionary[word]=len(dictionary)
+    data=list()
+    unk_count=0
+    for word in words:
+        if word in dictionary:
+            idx=dictionary[word]
         else:
-            x -= np.max(x)
-            x = np.exp(x)/np.sum(np.exp(x))
-        return x
+            idx=0   # dictionary['UNK'], words that are not frequently occur
+            unk_count+=1
+        data.append(idx)
+    count[0][1]=unk_count
+    reverse_dictionary=dict(zip(dictionary.values(),dictionary.keys()))
+    return data,count,dictionary,reverse_dictionary
+data, count, dictionary, reverse_dictionary = build_dataset(words)
+print('Most common words (+UNK)', count[:5])
+del words  # Hint to reduce memory.
+
+# Function to generate a training batch for the skip-gram model
+data_index=0
+def generate_batch(batch_size, bag_window):
+    global data_index
+    span=2*bag_window+1
+    batch=np.ndarray(shape=(batch_size, (span-1)), dtype=np.int32)
+    labels=np.ndarray(shape=(batch_size, 1), dtype=np.int32)
+    # deque是双端队列，可在队列两端添加和删除元素
+    buffer=collections.deque(maxlen=span)
+    for _ in range(span):
+        buffer.append(data[data_index])
+        data_index=(data_index+1)%len(data)
+    for i in range(batch_size):
+        buffer_list=list(buffer)
+        # 移除列表中的一个元素，并且返回该元素的值
+        labels[i,0]=buffer_list.pop(bag_window)
+        batch[i]=buffer_list
+        buffer.append(data[data_index])
+        data_index=(data_index+1)%len(data)
+    return batch, labels
+
+print('data:', [reverse_dictionary[di] for di in data[:16]])
+for bag_window in [1, 2]:
+    data_index=0
+    batch, labels=generate_batch(batch_size=4, bag_window=bag_window)
+    print('\nwith bag_window = %d:' % (bag_window))
+    print('    batch:', [[reverse_dictionary[w] for w in bi] for bi in batch])
+    print('    labels:', [reverse_dictionary[li] for li in labels.reshape(4)])
     
-    def compute_cross_entropy_error(self, y, y_hat):
-        """
-		 Given One hot encoding and the output of the softmax function, 
-        this function computes the cross entropy error. 
-		 
-        Parameters 
-		 ---------
-		 y : one_hot encoding of the current center word 
-		 y_hat : output of the softmax function. 
-		 """
-        return -y*np.log(y_hat)
+
+
+# Train a skip-gram model
+batch_size=128
+embeddings_size=128
+bag_window=2        # How many words to consider left and right
+valid_size=16       # Random set of words to evaluate similarity on
+valid_window=100    # Only pick dev samples in the head of the distribution
+valid_examples=np.array(random.sample(range(valid_window), valid_size))
+num_sampled=64      # Number of negative examples to sample
+
+# Input data
+train_dataset=tf.placeholder(tf.int32, shape=[batch_size, 2*bag_window])
+train_labels=tf.placeholder(tf.int32, shape=[batch_size, 1])
+valid_dataset=tf.constant(valid_examples, dtype=tf.int32)
+
+# Variables
+embeddings=tf.Variable(tf.random_uniform([vocabulary_size, embeddings_size], -1.0, 1.0))
+softmax_weights=tf.Variable(tf.truncated_normal([vocabulary_size, embeddings_size], stddev=1.0/math.sqrt(embeddings_size)))
+softmax_biases=tf.Variable(tf.zeros([vocabulary_size]))
+
+# Model
+# lookup embeddings for inputs
+embeds=tf.nn.embedding_lookup(embeddings, train_dataset)
+# compute the softmax loss, using a sample of the negative labels each time
+loss=tf.reduce_mean(tf.nn.sampled_softmax_loss(weights=softmax_weights, biases=softmax_biases, inputs=tf.reduce_sum(embeds, 1), 
+                                               labels=train_labels, num_sampled=num_sampled, num_classes=vocabulary_size))
+optimzer=tf.train.AdagradOptimizer(1.0).minimize(loss)
+# compute the similarity between minibatch examples and all embeddings
+norm=tf.sqrt(tf.reduce_sum(tf.square(embeddings), 1, keep_dims=True))
+normalized_embeddings=embeddings/norm
+valid_embeddings=tf.nn.embedding_lookup(normalized_embeddings, valid_dataset)
+similarity=tf.matmul(valid_embeddings, tf.transpose(normalized_embeddings))
+
+num_steps=100001
+with tf.Session() as sess:
+    tf.global_variables_initializer().run()
+    for step in range(num_steps):
+        batch_data, batch_labels=generate_batch(batch_size, bag_window)
+        feed_dict={train_dataset: batch_data, train_labels: batch_labels}
+        _, l=sess.run([optimzer, loss], feed_dict=feed_dict)
+    final_embeddings=normalized_embeddings.eval()
     
-    def compute_EH(self, error):
-        '''
-        Given error and U matrix, compute the value of EH
-        '''
-        EH=np.zeros(self.n)
-        for i in range(self.n):
-            temp=0.0
-            for j in range(len(self.vocabulary)):
-                temp+=error[j]*self.U[i,j]
-            EH[i]=temp
-        return EH
+# Save data
+data={
+      'embeddings':final_embeddings, 
+      'reverse_dictionary':reverse_dictionary
+      }
+with open('data.pickle', 'wb') as fw:
+    pickle.dump(data, fw, pickle.HIGHEST_PROTOCOL)
+with open('data.pickle', 'rb') as fr:
+    data_new_embed=pickle.load(fr)
     
-    def update_U(self, error, avg_vec):
-        for i in range(self.U.shape[0]):
-            self.U[i,:] -= self.learning_rate*error[i]*avg_vec
-            
-    def update_V(self, error, left_context, right_context):
-        # compute EH term 
-        EH=self.compute_EH(error)
-        
-        # pass the update
-        for word in left_context+right_context:
-            current_word_index=self.word_index[word]
-            self.V[:, current_word_index] -= (2*self.window)*self.learning_rate*EH
-            
-    def fit(self):
-        self.split_text=self.text.lower().split()
-        for i in range(len(self.split_text)):
-            print('\n\n')
-            center_word=self.split_text[i]
-            if i-self.window<0:
-                left_window, right_window = self.split_text[:i], self.split_text[i+1, i+self.window]
-            else:
-                left_window, right_window = self.split_text[i-self.window:i], self.split_text[i+1, i+self.window]
-            print('Center word = %s, left_window = %s, right_window = %s' %(center_word, left_window, right_window))
-            
-            avg_vector=self.get_average_vector_context(left_context=left_window, right_context=right_window)
-            
-            x_hat=self.get_score(avg_vector)
-            print('x_hat shape = '+str(x_hat.shape))
-            
-            y_hat=self.softmax(x_hat)
-            
-            center_word_index=self.word_index[center_word]
-            center_word_one_hot_encoding=self.get_one_hot(center_word_index)
-            
-            error=self.compute_cross_entropy_error(center_word_one_hot_encoding, y_hat)
-            print('Error = %s', error)
-            
-            self.update_U(error=error, avg_vec=avg_vector)
-            self.update_V(error=error, left_context=left_window, right_context=right_window)
-        
-        print('U matrix = %s'+str(self.U))
-        print('V matrix = %s'+str(self.V))
-        
-
-text=nltk.corpus.gutenberg.words('austen-emma.txt')
-text = ' '.join(text[:100])
-
-model  = cbow(text=text)
-model.fit()
-
-final_vectors = {}
-for k, v in model.word_index.items():
-	final_vectors[k] = (model.U[v, :] + model.V[:, v])/2
-print(final_vectors)
-
-import matplotlib.pylab as plt
-for k, v in final_vectors.items():
-	plt.text(v[0], v[1], k)
-plt.show()
+# Visualize embeddings
+num_points=400
+tsne=TSNE(perplexity=30, n_components=2, init='pca', n_iter=5000, method='exact')
+two_d_embeddings=tsne.fit_transform(final_embeddings[1:num_points+1, :])
+def plot(embeddings, labels):
+    assert embeddings.shape[0]>=len(labels)
+    pylab.figure(figsize=(15, 15))
+    for i, label in enumerate(labels):
+        x, y=embeddings[i, :]
+        pylab.scatter(x, y)
+        pylab.annotate(label, xy=(x, y), xytext=(5, 2), textcoords='offset points', ha='right', va='bottom')
+    pylab.show()
+words=[reverse_dictionary[i] for i in range(1, num_points+1)]
+plot(two_d_embeddings, words)

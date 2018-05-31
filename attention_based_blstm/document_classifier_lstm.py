@@ -13,7 +13,7 @@ import numpy as np
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
 from keras.layers.wrappers import Bidirectional
-from keras.layers import Dense, Input, LSTM, Embedding, Dropout, Activation
+from keras.layers import Dense, Input, LSTM, Embedding, Dropout, Activation, RNN
 from keras.layers import SpatialDropout1D
 from keras.models import Model
 from keras.layers.normalization import BatchNormalization
@@ -50,17 +50,43 @@ def f1_score(y_true, y_pred):
     y_true=tf.cast(y_true, 'float32')
     y_pred=tf.cast(tf.round(y_pred), 'float32')
     y_correct=y_true*y_pred
+    y_correct=tf.where(tf.is_nan(y_correct), tf.zeros_like(y_correct), y_correct)
     
     sum_true=tf.reduce_sum(y_true, axis=1)
     sum_pred=tf.reduce_sum(y_pred, axis=1)
     sum_correct=tf.reduce_sum(y_correct, axis=1)
     
     precision=sum_correct/sum_pred
+    precision=tf.where(tf.is_nan(precision), tf.zeros_like(precision), precision)
     recall=sum_correct/sum_true
     f_score=1*precision*recall/(precision+recall)
     f_score=tf.where(tf.is_nan(f_score), tf.zeros_like(f_score), f_score)
-    
     return tf.reduce_mean(f_score)
+
+def precision_score(y_true, y_pred):
+    y_true=tf.cast(y_true, 'float32')
+    y_pred=tf.cast(tf.round(y_pred), 'float32')
+    y_correct=y_true*y_pred
+    y_correct=tf.where(tf.is_nan(y_correct), tf.zeros_like(y_correct), y_correct)
+    
+    sum_pred=tf.reduce_sum(y_pred, axis=1)
+    sum_correct=tf.reduce_sum(y_correct, axis=1)
+    
+    precision=sum_correct/sum_pred
+    precision=tf.where(tf.is_nan(precision), tf.zeros_like(precision), precision)
+    return tf.reduce_mean(precision)
+
+def recall_score(y_true, y_pred):
+    y_true=tf.cast(y_true, 'float32')
+    y_pred=tf.cast(tf.round(y_pred), 'float32')
+    y_correct=y_true*y_pred
+    y_correct=tf.where(tf.is_nan(y_correct), tf.zeros_like(y_correct), y_correct)
+    
+    sum_true=tf.reduce_sum(y_true, axis=1)
+    sum_correct=tf.reduce_sum(y_correct, axis=1)
+    
+    recall=sum_correct/sum_true
+    return tf.reduce_mean(recall)
 
 def load_data(train_set):
     X_data=[]
@@ -89,7 +115,6 @@ def load_data(train_set):
     tokenizer=Tokenizer(num_words=MAX_NB_WORDS, oov_token=1)
     tokenizer.fit_on_texts(X_data)
     X_data=tokenizer.texts_to_sequences(X_data)
-    
     X_data=pad_sequences(X_data, maxlen=MAX_SEQUENCE_LENGTH, padding='post', truncating='post', dtype='float32')
     print('Shape of data tensor:', X_data.shape)
     
@@ -144,17 +169,16 @@ def build_model(nb_classes, word_index, embedding_dim, seq_length, stamp):
                               embeddings_regularizer=regularizers.l2(0.00), 
                               trainable=True)(input_layer)
     drop1=SpatialDropout1D(0.3)(embedding_layer)
-    lstm_1=Bidirectional(LSTM(128, name='blstm_1', activation='tanh',
-                              recurrent_activation='hard_sigmoid', recurrent_dropout=0.0,
-                              kernel_initializer='glorot_uniform', return_sequences=True),
-                              merge_mode='concat')(drop1)
+    lstm_1=LSTM(128, name='lstm_1', activation='tanh',
+                recurrent_activation='hard_sigmoid', recurrent_dropout=0.0,
+                kernel_initializer='glorot_uniform', return_sequences=True)(drop1)
     lstm_1=BatchNormalization()(lstm_1)
     attention_layer=AttentionWithContext()(lstm_1)
     drop3=Dropout(0.5)(attention_layer)
     predictions=Dense(nb_classes, activation='sigmoid')(drop3)
     model=Model(inputs=input_layer, outputs=predictions)
     adam=Adam(lr=0.001, decay=0.0)
-    model.compile(loss='binary_crossentropy', optimizer=adam, metrics=[f1_score])
+    model.compile(loss='binary_crossentropy', optimizer=adam, metrics=[precision_score, recall_score, f1_score])
     model.summary()
     print(stamp)
     
@@ -172,7 +196,7 @@ def load_model(stamp):
     print('Load model from disk')
     model.summary()
     adam=Adam(lr=0.001)
-    model.compile(loss='binary_crossentropy', optimizer=adam, metrics=[f1_score])
+    model.compile(loss='binary_crossentropy', optimizer=adam, metrics=[precision_score, recall_score, f1_score])
     return model
 
 if __name__=='__main__':
@@ -191,5 +215,5 @@ if __name__=='__main__':
     best_model_path='data_path_save/attention_blstm/'+STAMP+'.h5'
     model_checkpoint=ModelCheckpoint(best_model_path, monitor=monitor_metric, verbose=1,
                                      save_best_only=True, mode='max', save_weights_only=True)
-    hist=model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=10, batch_size=128, shuffle=True, callbacks=[model_checkpoint])
+    hist=model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=10, batch_size=32, shuffle=True, callbacks=[model_checkpoint])
     print(hist.history)
