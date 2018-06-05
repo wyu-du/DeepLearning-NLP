@@ -10,7 +10,7 @@ This repository will apply deep learning methods to deal with natural language p
 * scikit-multilearn (0.0.5)
 
 ## To-do List
-* [ ] Segmentation
+* [x] Segmentation
 * [x] Word Embedding
 * [ ] POS
 * [x] NER
